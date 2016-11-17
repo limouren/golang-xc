@@ -1,0 +1,315 @@
+Cross Compilation with Go
+10 Nov 2016
+
+Kenji, Pa Tat Ki
+Oursky
+kenjipa@oursky.com
+@limouren
+
+* Welcome, gophers!
+
+.image crosscompile/hero.jpg
+
+* Who am I?
+
+- Kenji Pa
+- Programmer@Oursky ([[https://www.oursky.com]])
+- Contributor to [[https://github.com/skygeario/skygear-server][Skygear]]
+- Music game player (bmIIDX, pop'n music)
+- Cat feeder of [[https://www.facebook.com/chima.fasang][the office cats]] (＊'ω'＊)
+
+.image https://scontent-hkg3-1.xx.fbcdn.net/v/t1.0-9/14222151_935767999886337_1443324769863237756_n.png?oh=b88f746381a876fd0dc60d5703450b95&oe=588B739A
+
+* Cross Compile (Concept)
+
+- Host: The system where the compiler is run
+- Target: The system where the compiled code is run
+
+When `host`!=`target` => Cross compilation
+
+Examples:
+
+- host: Linux, target: Mac OS (different OS)
+- host: Linux on Intel, target: Linux on arm (different CPU)
+
+Cross compilation is probably more common than you thought:
+
+- host: Mac OS, target: iOS (We do it everyday!)
+
+* Why do we want to do that for Go?
+
+Isn't
+
+  go get github.com/me/software/cmd/awesome-cli
+
+Simple enough?
+
+Yea but there are cases you might want better distribution than that...
+
+- Your software targets non-developers (_What_is_Go?_)
+- Your software targets developers, but not necessarily Go's ones (_I_want_your_software_but_I_have_to_install_this_Go?_) <- the case of Skygear
+- Where you run the software isn't suitable for building it (e.g. embedded hardware)
+
+And frankly, what could be easier than a download-then-run?
+
+* Github Releases
+
+[[https://github.com/SkygearIO/skygear-server/releases]]
+
+.image crosscompile/skygear-downloads.png
+
+It looks cool 😎
+
+* XC: Getting started
+
+Let's say we have this very simple program:
+
+.code crosscompile/hello-world.go
+
+- [[https://github.com/limouren/hello-world]]
+
+What if I want to cross-compile this on my machine to run on linux/amd64?
+
+1. Install Go (>=1.5)
+
+* XC: Getting started
+
+Let's say we have this very simple program:
+
+.code crosscompile/hello-world.go
+
+- [[https://github.com/limouren/hello-world]]
+
+What if I want to cross-compile this on my machine to run on linux/amd64?
+
+1. Install Go (>=1.5)
+2. GOOS=linux GOARCH=amd64 go build
+
+* End of Presentation
+
+.image crosscompile/cheers.jpg
+
+* Okay, not yet
+
+To build to multiple os/arch, we could use a script (in courtesy of [[https://hub.docker.com/_/golang/][golang docker image]]):
+
+  for GOOS in darwin linux; do
+    for GOARCH in 386 amd64; do
+      go build -v -o hello-world-$GOOS-$GOARCH
+    done
+  done
+
+[[https://github.com/mitchellh/gox][gox]] is very handy in doing the above, plus it does parallel builds:
+
+  $ go get github.com/mitchellh/gox
+  $ gox -os="darwin linux" -arch="386 amd64" -output="{{.Dir}}-{{.OS}}-{{.Arch}}"
+  Number of parallel builds: 3
+  
+  -->     linux/amd64: github.com/limouren/hello-world
+  -->    darwin/amd64: github.com/limouren/hello-world
+  -->      darwin/386: github.com/limouren/hello-world
+  -->       linux/386: github.com/limouren/hello-world
+  $ ls
+  hello-world-darwin-386   hello-world-darwin-amd64 hello-world-linux-386
+  hello-world-linux-amd64
+
+* How about Go with C?
+
+Here is what it becomes complicated. Consider this minimal Go program which
+calls C function:
+
+.code crosscompile/hello-world-xc.go
+
+* Cross-compiling with cgo
+
+Let's be naive and try to cross-compile it like we did before:
+
+  $ GOOS=linux GOARCH=arm go build
+  can't load package: package .: no buildable Go source files in /root/hello-world/xc-hello-world
+
+`go`build` doesn't even see my source!
+
+It's because when we cross-compile, go compiler disables cgo by default.
+That's why the compiler didn't see our files. We can enable cgo by setting
+`CGO_ENABLED=1` explicitly:
+
+  $ GOOS=linux GOARCH=arm CGO_ENABLED=1 go build
+  # runtime/cgo
+  gcc: error: unrecognized command line option '-marm'
+
+Which is not very helpful...
+
+* Cross-compiling with cgo (Cont.)
+
+We can examine the underlying commands that `go`build` emits by adding `-x`:
+
+  $ GOOS=linux GOARCH=arm CGO_ENABLED=1 go build -x
+  ...
+  /usr/local/go/pkg/tool/linux_amd64/compile -o $WORK/sync/atomic.a -trimpath
+    $WORK -p sync/atomic -buildid 3bf1a8d7136016ee7ffb8bf4e304adafa90b09e7
+    -D _/usr/local/go/src/sync/atomic -I $WORK -pack
+    -asmhdr $WORK/sync/atomic/_obj/go_asm.h ./64bit_arm.go ./doc.go ./value.go
+  # runtime/cgo
+  gcc: error: unrecognized command line option '-marm'
+  ...
+
+Now at least we know there is an error when Go tries to compile `sync/atomic`.
+
+* Cross-compiling with cgo (Cont.)
+
+We will need a cross-compiler to arm. Fortunately it's fairly easy to set it up
+in Linux (in my case Debian 8):
+
+  $ echo 'deb http://emdebian.org/tools/debian/ jessie main' \
+       >> /etc/apt/sources.list.d/crosstools.list
+  $ dpkg --add-architecture armhf
+  $ apt-get update
+  $ apt-get install crossbuild-essential-armhf
+
+  $ arm-linux-gnueabihf-gcc --version
+  arm-linux-gnueabihf-gcc ( 4.9.2-10) 4.9.2
+  Copyright (C) 2014 Free Software Foundation, Inc.
+  This is free software; see the source for copying conditions.  There is NO
+  warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+Ref: [[https://wiki.debian.org/CrossToolchains]]
+
+* Cross-compiling with cgo (Cont.)
+
+We have the cross-compiler now. Let's tell `go`build` to use our new compiler:
+
+  $ GOOS=linux GOARCH=arm CGO_ENABLED=1 CC=arm-linux-gnueabihf-gcc go build
+
+It works!
+
+* xgo
+
+xgo is a utility that uses a pre-configured environment to compile to multiple
+targets (i.e. it has all those cross-compilers installed!).
+
+To install:
+
+  # Install Docker here:
+  # https://docs.docker.com/engine/installation/
+  $ docker pull karalabe/xgo-latest
+  $ go get github.com/karalabe/xgo
+
+* xgo (Cont.)
+
+Now use it:
+
+  $ xgo .
+  ...
+  $ ls -lah
+  -rwxr-xr-x   1 limouren  staff   981K Nov 17 17:25 xc-hello-world-android-16-386
+  drwxr-xr-x   5 limouren  staff   170B Nov 17 17:25 xc-hello-world-android-16-aar
+  -rwxr-xr-x   1 limouren  staff   1.0M Nov 17 17:25 xc-hello-world-android-16-arm
+  -rwxr-xr-x   1 limouren  staff   637K Nov 17 17:27 xc-hello-world-darwin-10.6-386
+  -rwxr-xr-x   1 limouren  staff   732K Nov 17 17:27 xc-hello-world-darwin-10.6-amd64
+  -rwxr-xr-x   1 limouren  staff   741K Nov 17 17:27 xc-hello-world-ios-5.0-arm64
+  -rwxr-xr-x   1 limouren  staff   678K Nov 17 17:27 xc-hello-world-ios-5.0-armv7
+  drwxrwxrwx   3 limouren  staff   102B Nov 17 17:27 xc-hello-world-ios-5.0-framework
+  -rwxr-xr-x   1 limouren  staff   868K Nov 17 17:26 xc-hello-world-linux-386
+  -rwxr-xr-x   1 limouren  staff   1.0M Nov 17 17:26 xc-hello-world-linux-amd64
+  -rwxr-xr-x   1 limouren  staff   927K Nov 17 17:26 xc-hello-world-linux-arm-5
+  -rwxr-xr-x   1 limouren  staff   880K Nov 17 17:26 xc-hello-world-linux-arm-6
+  -rwxr-xr-x   1 limouren  staff   879K Nov 17 17:26 xc-hello-world-linux-arm-7
+  -rwxr-xr-x   1 limouren  staff   1.0M Nov 17 17:27 xc-hello-world-linux-arm64
+  -rwxr-xr-x   1 limouren  staff   1.1M Nov 17 17:27 xc-hello-world-linux-mips64
+  -rwxr-xr-x   1 limouren  staff   1.1M Nov 17 17:27 xc-hello-world-linux-mips64le
+  -rwxr-xr-x   1 limouren  staff   763K Nov 17 17:27 xc-hello-world-windows-4.0-386.exe
+  -rwxr-xr-x   1 limouren  staff   872K Nov 17 17:27 xc-hello-world-windows-4.0-amd64.exe
+
+* xgo (Cont.)
+
+.image crosscompile/cry.png
+
+* Github Releases
+
+Now we have the binaries, the only thing left is to upload them to github:
+
+1. Open up github
+2. Create a release
+3. Upload your newly cross-compiled binaries
+4. Submit and done!
+
+* Automated Github Releases
+
+Doing things manually is good, but having it done automatically is even better.
+
+For Skygear we have made the whole process automatic s.t. whenever a new tag is pushed, we compile the code on [[http://travis-ci.org/][Travis]] and create a new github release.
+
+For the sake of the discussion in this presentation, you can treat Travis as a service that would trigger a build on a linux machine whenever we push a new commit to our github repo.
+
+* Setting up Travis
+
+Let's say we are setting things up from scratch for the repo [[https://github.com/limouren/hello-world]]:
+
+1. Login [[https://travis-ci.org/]] using your github account
+2. Enable the project in [[https://travis-ci.org/profile]]:
+
+.image crosscompile/travis-enable-project.png
+
+3. Now make sure your repo has a `.travis.yml` like this:
+
+  language: go
+  
+  go:
+  - 1.6
+
+4. Add, commit and push the yml file. It should trigger a Travis build.
+
+* Setting up Travis (Cont.)
+
+5. Green!
+
+.image crosscompile/travis-1st-build.png
+
+* Setting up Travis (Cont.)
+
+6. Use the Travis CI CLI ([[https://github.com/travis-ci/travis.rb#installation][How to install]]) to authorize Travis to create a release in Github:
+
+  $ travis setup releases
+  Username: limouren
+  Password for limouren: *****************
+  Two-factor authentication code for limouren: [censored]
+  File to Upload: 
+  Deploy only from limouren/hello-world? |yes| 
+  Encrypt API key? |yes| 
+
+7. You will notice a section added to your travis.yml. It's the github releases configuration.
+
+  deploy:
+    provider: releases
+    api_key:
+      secure: lcu[omitted]
+    file: ''
+    on:
+      repo: limouren/hello-world
+
+* Setting up Travis (Cont.)
+
+8. Finally we can build our binaries to be uploaded to github!!
+
+  before_deploy:
+  - go get github.com/mitchellh/gox
+  - mkdir dist
+  - gox
+      -osarch="linux/amd64 linux/386 linux/arm windows/amd64 windows/386 darwin/amd64"
+      -output="dist/{{.Dir}}-{{.OS}}-{{.Arch}}"
+
+9. Modify the `deploy` section to upload our cross-compiled binaries:
+
+  deploy:
+    provider: releases
+    api_key:
+      secure: lcu[omitted]
+    file: "dist/hello-world-*"
+    file_glob: true
+    skip_cleanup: true
+    on:
+      tags: true
+
+10. Now commit the files and create a new tag of it. You shall see your new release very soon!
+
+* Q & A
